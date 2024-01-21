@@ -7,9 +7,8 @@ use std::time::Duration;
 use anyhow::Result;
 use openssl::hash::{hash, MessageDigest};
 use openssl::symm::{decrypt, encrypt, Cipher};
-use pqcrypto::kem::kyber1024::{decapsulate, encapsulate, keypair};
-use rand::rngs::OsRng;
-use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+use pqcrypto::kem::kyber1024::{encapsulate, PublicKey, SharedSecret};
+use pqcrypto::prelude::*;
 
 use chrono::{Datelike, Local, Timelike};
 
@@ -23,25 +22,20 @@ pub struct Connection<'a> {
 
 impl<'a> Connection<'a> {
     pub fn establish(stream: &'a mut TcpStream, address: &SocketAddr) -> Result<Self> {
-        let (pk, sk) = keypair();
-        let (ss1, ct) = encapsulate(&pk);
-        let ss2 = decapsulate(&ct, &sk);
-
-        let server_private = EphemeralSecret::random_from_rng(OsRng);
-        let server_public = PublicKey::from(&server_private);
-        stream.write_all(server_public.as_bytes())?;
-        let mut key_bytes = [0; 32];
-        stream.read_exact(&mut key_bytes)?;
-        let client_public = key_bytes.into();
-        let shared_secret = server_private.diffie_hellman(&client_public);
+        let mut pk_bytes = [0; 1568];
+        stream.read_exact(&mut pk_bytes)?;
+        let pk = PublicKey::from_bytes(&pk_bytes)?;
+        let (ss, ct) = encapsulate(&pk);
+        stream.write_all(ct.as_bytes())?;
+        ss.as_bytes();
         let cipher = Cipher::aes_256_cbc();
         let digest = MessageDigest::shake_128();
-        let iv = hash(digest, shared_secret.as_bytes())?.to_vec();
+        let iv = hash(digest, ss.as_bytes())?.to_vec();
         let logger = Logger::create(&address)?;
         Ok(Self {
             cipher,
             stream,
-            shared_secret,
+            shared_secret: ss,
             iv,
             logger,
         })

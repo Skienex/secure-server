@@ -5,10 +5,11 @@ use std::time::Duration;
 use anyhow::{Ok, Result};
 use openssl::hash::{hash, MessageDigest};
 use openssl::symm::{decrypt, encrypt, Cipher};
-use rand::rngs::OsRng;
-use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+use pqcrypto::kem::kyber1024::{decapsulate, keypair, Ciphertext, SharedSecret};
+use pqcrypto::prelude::*;
+use pqcrypto::traits::kem::PublicKey;
 
-struct Connection<'a> {
+pub struct Connection<'a> {
     stream: &'a mut TcpStream,
     shared_secret: SharedSecret,
     cipher: Cipher,
@@ -17,21 +18,19 @@ struct Connection<'a> {
 
 impl<'a> Connection<'a> {
     pub fn establish(stream: &'a mut TcpStream) -> Result<Self> {
-        let client_private = EphemeralSecret::random_from_rng(OsRng);
-        let client_public = PublicKey::from(&client_private);
-        stream.write_all(client_public.as_bytes())?;
-        let mut key_bytes = [0; 32];
-        stream.read_exact(&mut key_bytes)?;
-        let server_public = key_bytes.into();
-        let shared_secret = client_private.diffie_hellman(&server_public);
+        let (pk, sk) = keypair();
+        stream.write_all(pk.as_bytes())?;
+        let mut ct_bytes = [0; 1568];
+        stream.read_exact(&mut ct_bytes)?;
+        let ct = Ciphertext::from_bytes(&ct_bytes)?;
+        let ss = decapsulate(&ct, &sk);
         let cipher = Cipher::aes_256_cbc();
         let digest = MessageDigest::shake_128();
-        let iv = hash(digest, shared_secret.as_bytes())?.to_vec();
-
+        let iv = hash(digest, ss.as_bytes())?.to_vec();
         Ok(Self {
-            cipher,
-            shared_secret,
             stream,
+            shared_secret: ss,
+            cipher,
             iv,
         })
     }
