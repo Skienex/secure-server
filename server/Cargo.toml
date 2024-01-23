@@ -7,8 +7,7 @@ edition = "2021"
 anyhow = "1.0.79"
 chrono = "0.4.31"
 openssl = "0.10.63"
-rand = "0.8.5"
-x25519-dalek = "2.0.0"
+secure-common = { path = "../common" }
 
 [dependencies.pqcrypto]
 version = "0.17.0"

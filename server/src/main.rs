@@ -1,14 +1,16 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
 use openssl::hash::{hash, MessageDigest};
 use openssl::symm::{decrypt, encrypt, Cipher};
-use pqcrypto::kem::kyber1024::{encapsulate, PublicKey, SharedSecret};
+use pqcrypto::kem::kyber1024::{self, encapsulate, SharedSecret};
 use pqcrypto::prelude::*;
+use pqcrypto::sign::sphincsshake128ssimple;
 
 use chrono::{Datelike, Local, Timelike};
 
@@ -21,10 +23,15 @@ pub struct Connection<'a> {
 }
 
 impl<'a> Connection<'a> {
-    pub fn establish(stream: &'a mut TcpStream, address: &SocketAddr) -> Result<Self> {
+    pub fn establish(
+        stream: &'a mut TcpStream,
+        address: &SocketAddr,
+        server_sk: Rc<sphincsshake128ssimple::SecretKey>,
+        client_pk: Rc<sphincsshake128ssimple::PublicKey>,
+    ) -> Result<Self> {
         let mut pk_bytes = [0; 1568];
         stream.read_exact(&mut pk_bytes)?;
-        let pk = PublicKey::from_bytes(&pk_bytes)?;
+        let pk = kyber1024::PublicKey::from_bytes(&pk_bytes)?;
         let (ss, ct) = encapsulate(&pk);
         stream.write_all(ct.as_bytes())?;
         ss.as_bytes();
@@ -32,6 +39,18 @@ impl<'a> Connection<'a> {
         let digest = MessageDigest::shake_128();
         let iv = hash(digest, ss.as_bytes())?.to_vec();
         let logger = Logger::create(&address)?;
+        let sig = sphincsshake128ssimple::detached_sign(ss.as_bytes(), &server_sk);
+
+        let encrypted_sig = encrypt(cipher, ss.as_bytes(), Some(&iv), sig.as_bytes())?;
+        stream.write_all(&encrypted_sig)?;
+
+        let mut sig_bytes = [0u8; 7856];
+
+        stream.read_exact(&mut sig_bytes)?;
+        let decrypted_sig_bytes = decrypt(cipher, ss.as_bytes(), Some(&iv), &sig_bytes)?;
+        let sig = sphincsshake128ssimple::DetachedSignature::from_bytes(&decrypted_sig_bytes)?;
+        sphincsshake128ssimple::verify_detached_signature(&sig, ss.as_bytes(), &client_pk)?;
+
         Ok(Self {
             cipher,
             stream,
@@ -151,7 +170,6 @@ fn main() -> Result<()> {
             }
         });
     });
-
     Ok(())
 }
 

@@ -1,5 +1,6 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::rc::Rc;
 use std::time::Duration;
 
 use anyhow::{Ok, Result};
@@ -7,7 +8,7 @@ use openssl::hash::{hash, MessageDigest};
 use openssl::symm::{decrypt, encrypt, Cipher};
 use pqcrypto::kem::kyber1024::{decapsulate, keypair, Ciphertext, SharedSecret};
 use pqcrypto::prelude::*;
-use pqcrypto::traits::kem::PublicKey;
+use pqcrypto::sign::sphincsshake128ssimple;
 
 pub struct Connection<'a> {
     stream: &'a mut TcpStream,
@@ -17,7 +18,11 @@ pub struct Connection<'a> {
 }
 
 impl<'a> Connection<'a> {
-    pub fn establish(stream: &'a mut TcpStream) -> Result<Self> {
+    pub fn establish(
+        stream: &'a mut TcpStream,
+        client_sk: Rc<sphincsshake128ssimple::SecretKey>,
+        server_pk: Rc<sphincsshake128ssimple::PublicKey>,
+    ) -> Result<Self> {
         let (pk, sk) = keypair();
         stream.write_all(pk.as_bytes())?;
         let mut ct_bytes = [0; 1568];
@@ -27,6 +32,18 @@ impl<'a> Connection<'a> {
         let cipher = Cipher::aes_256_cbc();
         let digest = MessageDigest::shake_128();
         let iv = hash(digest, ss.as_bytes())?.to_vec();
+        let mut sig_bytes = [0u8; 7856];
+        stream.read_exact(&mut sig_bytes)?;
+        let decrypted_sig_bytes = decrypt(cipher, ss.as_bytes(), Some(&iv), &sig_bytes)?;
+        let sig = sphincsshake128ssimple::DetachedSignature::from_bytes(&decrypted_sig_bytes)?;
+        sphincsshake128ssimple::verify_detached_signature(&sig, ss.as_bytes(), &server_pk)?;
+
+        let sig = sphincsshake128ssimple::detached_sign(ss.as_bytes(), &client_sk);
+
+        let encrypted_sig = encrypt(cipher, ss.as_bytes(), Some(&iv), sig.as_bytes())?;
+
+        stream.write_all(&encrypted_sig)?;
+
         Ok(Self {
             stream,
             shared_secret: ss,
