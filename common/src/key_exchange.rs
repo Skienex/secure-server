@@ -1,3 +1,4 @@
 pub use pqcrypto::kem::kyber1024::{
-    decapsulate, encapsulate, keypair, Ciphertext, PublicKey, SecretKey, SharedSecret,
+    ciphertext_bytes, decapsulate, encapsulate, keypair, public_key_bytes, Ciphertext, PublicKey,
+    SecretKey, SharedSecret,
 };

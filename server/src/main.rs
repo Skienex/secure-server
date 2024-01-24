@@ -1,23 +1,17 @@
-use std::fs::File;
-use std::io::{Read, Write};
+use std::fs;
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::thread;
 use std::time::Duration;
 
 use anyhow::Result;
-use openssl::hash::{hash, MessageDigest};
-use openssl::symm::{decrypt, encrypt, Cipher};
-use pqcrypto::kem::kyber1024::{self, encapsulate, SharedSecret};
-use pqcrypto::prelude::*;
-use pqcrypto::sign::sphincsshake128ssimple;
 
 use chrono::{Datelike, Local, Timelike};
+use secure_common::encryption::Encrypted;
+use secure_common::sign;
 
 pub struct Connection<'a> {
-    stream: &'a mut TcpStream,
-    shared_secret: SharedSecret,
-    cipher: Cipher,
-    iv: Vec<u8>,
+    stream: Encrypted<&'a mut TcpStream>,
     logger: Logger,
 }
 
@@ -25,75 +19,27 @@ impl<'a> Connection<'a> {
     pub fn establish(
         stream: &'a mut TcpStream,
         address: &SocketAddr,
-        server_sk: &sphincsshake128ssimple::SecretKey,
-        client_pk: &sphincsshake128ssimple::PublicKey,
+        server_sk: &sign::SecretKey,
+        client_pk: &sign::PublicKey,
     ) -> Result<Self> {
-        let mut pk_bytes = [0; 1568];
-        stream.read_exact(&mut pk_bytes)?;
-        let pk = kyber1024::PublicKey::from_bytes(&pk_bytes)?;
-        let (ss, ct) = encapsulate(&pk);
-        stream.write_all(ct.as_bytes())?;
-        ss.as_bytes();
-        let cipher = Cipher::aes_256_cbc();
-        let digest = MessageDigest::shake_128();
-        let iv = hash(digest, ss.as_bytes())?.to_vec();
+        let mut stream = Encrypted::accept(stream)?;
         let logger = Logger::create(&address)?;
-        // Send server signature
-        let sig = sphincsshake128ssimple::detached_sign(ss.as_bytes(), &server_sk);
-        let encrypted_sig = encrypt(cipher, ss.as_bytes(), Some(&iv), sig.as_bytes())?;
-        stream.write_all(&encrypted_sig)?;
-        // Verify client signature
-        let mut sig_bytes = [0u8; 7856];
-        stream.read_exact(&mut sig_bytes)?;
-        let decrypted_sig_bytes = decrypt(cipher, ss.as_bytes(), Some(&iv), &sig_bytes)?;
-        let sig = sphincsshake128ssimple::DetachedSignature::from_bytes(&decrypted_sig_bytes)?;
-        sphincsshake128ssimple::verify_detached_signature(&sig, ss.as_bytes(), &client_pk)?;
-        Ok(Self {
-            cipher,
-            stream,
-            shared_secret: ss,
-            iv,
-            logger,
-        })
+        stream.authorize(server_sk)?;
+        stream.verify(client_pk)?;
+        Ok(Self { stream, logger })
     }
 
-    pub fn send_raw(&mut self, data: &[u8]) -> Result<()> {
-        let output = encrypt(
-            self.cipher,
-            self.shared_secret.as_bytes(),
-            Some(&self.iv),
-            data,
-        )?;
-        self.stream.write_all(&output)?;
-        self.logger.info(&format!(
-            "Sent '{:?}' to server.",
-            String::from_utf8_lossy(data)
-        ))?;
-        Ok(())
+    pub fn send(&mut self, data: &[u8]) -> Result<()> {
+        self.stream.send(data)
     }
 
-    pub fn receive_raw(&mut self, max_len: usize) -> Result<Vec<u8>> {
-        let mut buf = vec![0; max_len];
-        let len = self.stream.read(&mut buf)?;
-        if len == 0 {
-            return Ok(Vec::new());
-        }
-        let bytes = decrypt(
-            self.cipher,
-            self.shared_secret.as_bytes(),
-            Some(&self.iv),
-            &buf[0..len],
-        )?;
-        self.logger.info(&format!(
-            "Received: '{:?}'",
-            String::from_utf8_lossy(&bytes)
-        ))?;
-        Ok(bytes)
+    pub fn receive(&mut self, len: usize) -> Result<Vec<u8>> {
+        self.stream.receive(len)
     }
 }
 
 pub struct Logger {
-    file: File,
+    file: fs::File,
 }
 
 impl Logger {
@@ -104,7 +50,7 @@ impl Logger {
             SocketAddr::V6(addr) => addr.to_string(),
         };
         let log_name = format!(
-            "logs\\log-{:04}-{:02}-{:02}-{:02}-{:02}-{:02}.txt",
+            "logs/log-{:04}-{:02}-{:02}-{:02}-{:02}-{:02}.txt",
             now.year(),
             now.month(),
             now.day(),
@@ -112,7 +58,7 @@ impl Logger {
             now.minute(),
             now.second(),
         );
-        let file = File::create(log_name)?;
+        let file = fs::File::create(log_name)?;
         let mut logger = Self { file };
         logger.info(&format!("Client connected with ip: {}", ip))?;
         Ok(logger)
@@ -151,9 +97,27 @@ impl Logger {
     }
 }
 
+fn handle_client(
+    stream: &mut TcpStream,
+    address: &SocketAddr,
+    server_sk: &sign::SecretKey,
+    client_pk: &sign::PublicKey,
+) -> Result<()> {
+    let mut conn = Connection::establish(stream, address, server_sk, client_pk)?;
+    conn.send(b"....----....----")?;
+    loop {
+        let bytes = conn.receive(16)?;
+        if !bytes.is_empty() {
+            println!("Message from client: {:?}", String::from_utf8_lossy(&bytes));
+            thread::sleep(Duration::from_secs(2));
+            conn.send(b"fedcba9876543210")?;
+        }
+    }
+}
+
 fn main() -> Result<()> {
-    let server_sk = secure_common::sign::read_sk("server.sk")?;
-    let client_pk = secure_common::sign::read_pk("client.pk")?;
+    let server_sk = sign::read_sk("server.sk")?;
+    let client_pk = sign::read_pk("client.pk")?;
     let listener = TcpListener::bind("localhost:12345")?;
     thread::scope(move |scope| loop {
         let (mut stream, address) = match listener.accept() {
@@ -170,21 +134,4 @@ fn main() -> Result<()> {
         });
     });
     Ok(())
-}
-
-fn handle_client(
-    stream: &mut TcpStream,
-    address: &SocketAddr,
-    server_sk: &secure_common::sign::SecretKey,
-    client_pk: &secure_common::sign::PublicKey,
-) -> Result<()> {
-    let mut conn = Connection::establish(stream, address, server_sk, client_pk)?;
-    conn.send_raw(b"Server Nachricht")?;
-    loop {
-        let bytes = conn.receive_raw(1024)?;
-        if !bytes.is_empty() {
-            thread::sleep(Duration::from_secs(2));
-            let _ = conn.send_raw(b"From Server");
-        }
-    }
 }

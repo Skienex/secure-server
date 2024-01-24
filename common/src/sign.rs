@@ -1,5 +1,6 @@
 pub use pqcrypto::sign::sphincsshake128ssimple::{
-    detached_sign, verify_detached_signature, DetachedSignature, PublicKey, SecretKey,
+    detached_sign, signature_bytes, verify_detached_signature, DetachedSignature, PublicKey,
+    SecretKey,
 };
 
 use std::{fs, path::Path};

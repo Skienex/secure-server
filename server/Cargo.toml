@@ -6,10 +6,4 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.79"
 chrono = "0.4.31"
-openssl = "0.10.63"
 secure-common = { path = "../common" }
-
-[dependencies.pqcrypto]
-version = "0.17.0"
-default-features = false
-features = ["pqcrypto-kyber", "pqcrypto-sphincsplus"]

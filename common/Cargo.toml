@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.79"
+openssl = "0.10.63"
 
 [dependencies.pqcrypto]
 version = "0.17.0"
