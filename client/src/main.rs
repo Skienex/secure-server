@@ -1,14 +1,14 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::rc::Rc;
 use std::time::Duration;
 
-use anyhow::{Ok, Result};
+use anyhow::Result;
 use openssl::hash::{hash, MessageDigest};
 use openssl::symm::{decrypt, encrypt, Cipher};
-use pqcrypto::kem::kyber1024::{decapsulate, keypair, Ciphertext, SharedSecret};
+use pqcrypto::kem::kyber1024::{decapsulate, Ciphertext, SharedSecret};
 use pqcrypto::prelude::*;
 use pqcrypto::sign::sphincsshake128ssimple;
+use secure_common::{key_exchange, sign};
 
 pub struct Connection<'a> {
     stream: &'a mut TcpStream,
@@ -20,10 +20,10 @@ pub struct Connection<'a> {
 impl<'a> Connection<'a> {
     pub fn establish(
         stream: &'a mut TcpStream,
-        client_sk: Rc<sphincsshake128ssimple::SecretKey>,
-        server_pk: Rc<sphincsshake128ssimple::PublicKey>,
+        client_sk: &sign::SecretKey,
+        server_pk: &sign::PublicKey,
     ) -> Result<Self> {
-        let (pk, sk) = keypair();
+        let (pk, sk) = secure_common::key_exchange::keypair();
         stream.write_all(pk.as_bytes())?;
         let mut ct_bytes = [0; 1568];
         stream.read_exact(&mut ct_bytes)?;
@@ -32,18 +32,16 @@ impl<'a> Connection<'a> {
         let cipher = Cipher::aes_256_cbc();
         let digest = MessageDigest::shake_128();
         let iv = hash(digest, ss.as_bytes())?.to_vec();
+        // Verify server signature
         let mut sig_bytes = [0u8; 7856];
         stream.read_exact(&mut sig_bytes)?;
         let decrypted_sig_bytes = decrypt(cipher, ss.as_bytes(), Some(&iv), &sig_bytes)?;
-        let sig = sphincsshake128ssimple::DetachedSignature::from_bytes(&decrypted_sig_bytes)?;
-        sphincsshake128ssimple::verify_detached_signature(&sig, ss.as_bytes(), &server_pk)?;
-
-        let sig = sphincsshake128ssimple::detached_sign(ss.as_bytes(), &client_sk);
-
+        let sig = sign::DetachedSignature::from_bytes(&decrypted_sig_bytes)?;
+        sign::verify_detached_signature(&sig, ss.as_bytes(), &server_pk)?;
+        // Send client signature
+        let sig = sign::detached_sign(ss.as_bytes(), &client_sk);
         let encrypted_sig = encrypt(cipher, ss.as_bytes(), Some(&iv), sig.as_bytes())?;
-
         stream.write_all(&encrypted_sig)?;
-
         Ok(Self {
             stream,
             shared_secret: ss,
@@ -80,8 +78,10 @@ impl<'a> Connection<'a> {
 }
 
 fn main() -> Result<()> {
+    let client_sk = secure_common::sign::read_sk("client.sk")?;
+    let server_pk = secure_common::sign::read_pk("server.pk")?;
     let mut stream = TcpStream::connect("localhost:12345")?;
-    let mut conn = Connection::establish(&mut stream)?;
+    let mut conn = Connection::establish(&mut stream, &client_sk, &server_pk)?;
     loop {
         let bytes = conn.receive_raw(1024)?;
         if !bytes.is_empty() {

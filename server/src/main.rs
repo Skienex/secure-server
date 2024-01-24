@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::rc::Rc;
 use std::thread;
 use std::time::Duration;
 
@@ -26,8 +25,8 @@ impl<'a> Connection<'a> {
     pub fn establish(
         stream: &'a mut TcpStream,
         address: &SocketAddr,
-        server_sk: Rc<sphincsshake128ssimple::SecretKey>,
-        client_pk: Rc<sphincsshake128ssimple::PublicKey>,
+        server_sk: &sphincsshake128ssimple::SecretKey,
+        client_pk: &sphincsshake128ssimple::PublicKey,
     ) -> Result<Self> {
         let mut pk_bytes = [0; 1568];
         stream.read_exact(&mut pk_bytes)?;
@@ -39,18 +38,16 @@ impl<'a> Connection<'a> {
         let digest = MessageDigest::shake_128();
         let iv = hash(digest, ss.as_bytes())?.to_vec();
         let logger = Logger::create(&address)?;
+        // Send server signature
         let sig = sphincsshake128ssimple::detached_sign(ss.as_bytes(), &server_sk);
-
         let encrypted_sig = encrypt(cipher, ss.as_bytes(), Some(&iv), sig.as_bytes())?;
         stream.write_all(&encrypted_sig)?;
-
+        // Verify client signature
         let mut sig_bytes = [0u8; 7856];
-
         stream.read_exact(&mut sig_bytes)?;
         let decrypted_sig_bytes = decrypt(cipher, ss.as_bytes(), Some(&iv), &sig_bytes)?;
         let sig = sphincsshake128ssimple::DetachedSignature::from_bytes(&decrypted_sig_bytes)?;
         sphincsshake128ssimple::verify_detached_signature(&sig, ss.as_bytes(), &client_pk)?;
-
         Ok(Self {
             cipher,
             stream,
@@ -155,6 +152,8 @@ impl Logger {
 }
 
 fn main() -> Result<()> {
+    let server_sk = secure_common::sign::read_sk("server.sk")?;
+    let client_pk = secure_common::sign::read_pk("client.pk")?;
     let listener = TcpListener::bind("localhost:12345")?;
     thread::scope(move |scope| loop {
         let (mut stream, address) = match listener.accept() {
@@ -165,7 +164,7 @@ fn main() -> Result<()> {
             }
         };
         scope.spawn(move || {
-            if let Err(err) = handle_client(&mut stream, &address) {
+            if let Err(err) = handle_client(&mut stream, &address, &server_sk, &client_pk) {
                 eprintln!("Error: {err}");
             }
         });
@@ -173,8 +172,13 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn handle_client(stream: &mut TcpStream, address: &SocketAddr) -> Result<()> {
-    let mut conn = Connection::establish(stream, address)?;
+fn handle_client(
+    stream: &mut TcpStream,
+    address: &SocketAddr,
+    server_sk: &secure_common::sign::SecretKey,
+    client_pk: &secure_common::sign::PublicKey,
+) -> Result<()> {
+    let mut conn = Connection::establish(stream, address, server_sk, client_pk)?;
     conn.send_raw(b"Server Nachricht")?;
     loop {
         let bytes = conn.receive_raw(1024)?;
