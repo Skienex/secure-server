@@ -1,12 +1,13 @@
 [package]
 name = "key-manager"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
-[dependencies.pqcrypto]
-version = "0.17.0"
-default-features = false
-features = ["pqcrypto-kyber", "pqcrypto-sphincsplus"]
+[dependencies]
+pqcrypto.workspace = true
 
 [[bin]]
 name = "keymgr"

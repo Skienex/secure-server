@@ -103,7 +103,9 @@ fn handle_client(
     server_sk: &sign::SecretKey,
     client_pk: &sign::PublicKey,
 ) -> Result<()> {
+    println!("Establishing connection to {address}");
     let mut conn = Connection::establish(stream, address, server_sk, client_pk)?;
+    println!("Connection to {address} established");
     conn.send(b"....----....----")?;
     loop {
         let bytes = conn.receive(16)?;
@@ -118,7 +120,9 @@ fn handle_client(
 fn main() -> Result<()> {
     let server_sk = sign::read_sk("server.sk")?;
     let client_pk = sign::read_pk("client.pk")?;
+    println!("Successfully read keys");
     let listener = TcpListener::bind("localhost:12345")?;
+    println!("Listening...");
     thread::scope(move |scope| loop {
         let (mut stream, address) = match listener.accept() {
             Ok(ok) => ok,

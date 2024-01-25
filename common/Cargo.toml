@@ -1,13 +1,12 @@
 [package]
 name = "secure-common"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-anyhow = "1.0.79"
-openssl = "0.10.63"
-
-[dependencies.pqcrypto]
-version = "0.17.0"
-default-features = false
-features = ["pqcrypto-kyber", "pqcrypto-sphincsplus"]
+anyhow.workspace = true
+openssl.workspace = true
+pqcrypto.workspace = true

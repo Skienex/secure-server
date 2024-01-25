@@ -1,8 +1,15 @@
 [package]
 name = "secure-client"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-anyhow = "1.0.79"
+anyhow.workspace = true
 secure-common = { path = "../common" }
+
+[[bin]]
+name = "client"
+path = "src/main.rs"

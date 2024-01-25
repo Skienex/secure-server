@@ -77,21 +77,18 @@ where
     }
 
     pub fn send(&mut self, data: &[u8]) -> Result<()> {
-        println!("pre-send: {}", data.len());
         let encrypted = encrypt(
             self.cipher,
             self.shared_secret.as_bytes(),
             Some(&self.iv),
             data,
         )?;
-        println!("post-send: {}", encrypted.len());
         self.stream.write_all(&encrypted)?;
         Ok(())
     }
 
     pub fn receive(&mut self, mut size: usize) -> Result<Vec<u8>> {
         size += 16 - size % 16;
-        println!("pre-receive: {size}");
         let mut buf = vec![0; size];
         self.stream.read_exact(&mut buf)?;
         let decrypted = decrypt(
@@ -100,7 +97,6 @@ where
             Some(&self.iv),
             &buf,
         )?;
-        println!("post-receive: {}", decrypted.len());
         Ok(decrypted)
     }
 }

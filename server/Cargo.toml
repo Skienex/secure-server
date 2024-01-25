@@ -1,9 +1,16 @@
 [package]
 name = "secure-server"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-anyhow = "1.0.79"
+anyhow.workspace = true
 chrono = "0.4.31"
 secure-common = { path = "../common" }
+
+[[bin]]
+name = "server"
+path = "src/main.rs"
